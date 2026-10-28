@@ -1,0 +1,9 @@
+{
+  "name": "forest-survival",
+  "version": "1.0.0",
+  "description": "4人協力 森のサバイバル(部屋コード制)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}

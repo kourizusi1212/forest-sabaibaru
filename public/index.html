@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>森の4人サバイバル</title>
+<style>
+:root{--bg:#0b1210;--fg:#f1efe6;--panel:rgba(10,18,14,.72);--acc:#ffb347;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;overflow:hidden}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none;font-size:14px}
+.box{position:absolute;background:var(--panel);border-radius:10px;padding:8px 12px}
+#stats{left:12px;bottom:12px;width:210px}
+.bar{height:8px;background:#0006;border-radius:4px;margin:3px 0 7px;overflow:hidden}.bar i{display:block;height:100%}
+#info{right:12px;top:12px;text-align:right}
+#team{left:12px;top:12px;min-width:150px}
+#msg{left:50%;top:18%;transform:translateX(-50%);font-size:18px;opacity:0;transition:opacity .4s;text-align:center}
+#hint{left:50%;bottom:14px;transform:translateX(-50%);text-align:center;opacity:.95}
+#cross{position:absolute;left:50%;top:50%;width:6px;height:6px;margin:-3px;border-radius:50%;background:#fff9}
+#ov{position:fixed;inset:0;background:#0b1210dd;display:flex;align-items:center;justify-content:center;text-align:center;cursor:pointer;padding:20px}
+#ov div{max-width:520px;line-height:1.7}#ov h1{margin:0 0 8px;color:var(--acc)}
+#ov small{opacity:.8}#ov{cursor:default}#ov button,#ov input{font:inherit;padding:8px 16px;border-radius:8px;border:1px solid #fff4;background:#1c2a22;color:var(--fg)}#ov button{background:var(--acc);color:#222;border:0;cursor:pointer;font-weight:700}#ov input{width:7em;text-align:center;text-transform:uppercase;letter-spacing:.2em}
+#dmg{position:fixed;inset:0;background:radial-gradient(transparent 40%,#c00 130%);opacity:0;pointer-events:none;transition:opacity .3s}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas><div id="dmg"></div>
+<div id="hud">
+ <div id="cross"></div>
+ <div class="box" id="team"></div>
+ <div class="box" id="info"></div>
+ <div class="box" id="stats">
+  ❤ 体力<div class="bar"><i id="bh" style="background:#e44;width:100%"></i></div>
+  🍖 満腹<div class="bar"><i id="bf" style="background:#e9a23b;width:100%"></i></div>
+  🔥 体温<div class="bar"><i id="bw" style="background:#4aa8ff;width:100%"></i></div>
+  <div id="inv"></div>
+ </div>
+ <div class="box" id="msg"></div>
+ <div class="box" id="hint"></div>
+</div>
+<div id="ov"><div>
+ <h1>🌲 森の4人サバイバル</h1>
+ <p>夜は狼が襲ってくる。仲間と協力して<b>5日間</b>生き延びよう。<br>部屋を作って、4文字のコードを仲間に伝えよう(最大4人)。</p>
+ <p><button id="mk">部屋を作る</button></p>
+ <p><input id="cd" maxlength="4" placeholder="CODE" autocomplete="off"> <button id="jn">入室</button></p>
+ <p id="net"><small>&nbsp;</small></p>
+ <p><small>WASD 移動 / Shift 走る / マウス 視点 / E 採取・燃料・救助 / F 焚き火(木3+石1)<br>Q 食べる / G 食料を渡す / クリック・Space 攻撃</small></p>
+</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+function rng(s){return()=>{s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+let R=rng(1);const W=105,DAY=90;
+const renderer=new THREE.WebGLRenderer({canvas:$('c'),antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene=new THREE.Scene(),cam=new THREE.PerspectiveCamera(70,1,.1,160);
+cam.rotation.order='YXZ';scene.add(cam);
+function resize(){renderer.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+const amb=new THREE.AmbientLight(0xffffff,.5),sun=new THREE.DirectionalLight(0xfff0d0,.8);
+sun.position.set(40,80,20);scene.add(amb,sun);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(W*2.6,W*2.6),new THREE.MeshLambertMaterial({color:0x3b5d2b}));
+ground.rotation.x=-Math.PI/2;scene.add(ground);
+
+// ---- world objects (seeded, identical for everyone) ----
+const objs=[];const N={0:170,1:28,2:26};
+function genWorld(seed){R=rng(seed);objs.length=0;cuts={};myCuts=[];myFires=[];for(const t of [0,1,2])for(let i=0;i<N[t];i++){let x,z;do{x=(R()*2-1)*W;z=(R()*2-1)*W}while(Math.hypot(x,z)<9);objs.push({id:objs.length,t,x,z,s:.8+R()*.7,k:i,vis:true})}M.trunk.count=M.crown.count=N[0];M.rock.count=N[1];M.bush.count=M.berry.count=N[2];objs.forEach(place)}
+const mk=(g,c,n,em)=>{const m=new THREE.InstancedMesh(g,new THREE.MeshLambertMaterial({color:c,emissive:em||0}),n);scene.add(m);return m};
+const gT=new THREE.CylinderGeometry(.3,.45,3,6).translate(0,1.5,0),gC=new THREE.ConeGeometry(2,5,7).translate(0,5,0);
+const gR=new THREE.DodecahedronGeometry(1,0).translate(0,.5,0),gB=new THREE.SphereGeometry(.9,7,6).translate(0,.5,0),gBe=new THREE.SphereGeometry(.3,6,5).translate(.3,1.1,.2);
+const M={trunk:mk(gT,0x6b4a2b,N[0]),crown:mk(gC,0x1f5a2c,N[0]),rock:mk(gR,0x8a8a90,N[1]),bush:mk(gB,0x2f7a3a,N[2]),berry:mk(gBe,0xd02040,N[2],0x400010)};
+const D=new THREE.Object3D();
+const parts=o=>o.t==0?[M.trunk,M.crown]:o.t==1?[M.rock]:[M.bush,M.berry];
+function place(o){for(const m of parts(o)){D.position.set(o.x,0,o.z);D.rotation.y=o.id;const s=o.vis?o.s:0;D.scale.set(s,s,s);D.updateMatrix();m.setMatrixAt(o.k,D.matrix);m.instanceMatrix.needsUpdate=true}}
+M.trunk.count=M.crown.count=M.rock.count=M.bush.count=M.berry.count=0;
+const REGROW=[150,150,70];
+
+// ---- state ----
+const S={x:0,z:6,ry:0,rx:0,hp:100,food:100,warm:100,wood:0,stone:0,meat:0,down:false,downT:0,day:1,swing:0,act:0,won:false,started:false};
+let myFires=[],cuts={},myCuts=[],peers=new Map(),myPeer=null,room=null,lastPhase=null;
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(!S.started)return;if(e.code=='KeyE')interact();if(e.code=='KeyF')buildFire();if(e.code=='KeyQ')eat();if(e.code=='KeyG')gift();if(e.code=='Space'){attack();e.preventDefault()}});
+addEventListener('keyup',e=>keys[e.code]=false);
+let drag=false;
+function look(dx,dy){S.ry-=dx*.0026;S.rx=Math.max(-1.4,Math.min(1.4,S.rx-dy*.0026))}
+addEventListener('mousemove',e=>{if(document.pointerLockElement||drag)look(e.movementX,e.movementY)});
+addEventListener('mouseup',()=>drag=false);
+$('c').addEventListener('mousedown',()=>{if(!S.started)return;drag=true;attack();try{if(!document.pointerLockElement)$('c').requestPointerLock()}catch(e){}});
+
+
+function toast(t){const m=$('msg');m.textContent=t;m.style.opacity=1;clearTimeout(toast.h);toast.h=setTimeout(()=>m.style.opacity=0,2200)}
+let tOff=0,t0=0,CODE='';const now=()=>Date.now()+tOff;
+const fwd=()=>new THREE.Vector3(-Math.sin(S.ry),0,-Math.cos(S.ry));
+const allFires=()=>{const a=myFires.map(f=>({...f,own:true}));peers.forEach(p=>(p.fires||[]).forEach(f=>a.push(f)));return a.filter(f=>f.end>now())};
+
+function cutObj(id,ts){cuts[id]=ts;objs[id].vis=false;place(objs[id])}
+function nearest(t,r){let b=null,bd=r;for(const o of objs){if(!o.vis||(t!=null&&o.t!=t))continue;const d=Math.hypot(o.x-S.x,o.z-S.z);if(d<bd){bd=d;b=o}}return b}
+function nearPeer(r,pred){let b=null,bd=r;peers.forEach((p,k)=>{const d=Math.hypot(p.x-S.x,p.z-S.z);if(d<bd&&(!pred||pred(p))){bd=d;b=k}});return b}
+
+function interact(){
+ if(S.down||S.act>now())return;S.act=now()+350;
+ const dp=nearPeer(3,p=>p.down);if(dp){send('revive',{to:dp});toast('助け起こしている…');return}
+ const fi=allFires().find(f=>Math.hypot(f.x-S.x,f.z-S.z)<3);
+ if(fi&&S.wood>0){S.wood--;if(fi.own){fi.end=Math.min(fi.end+40000,now()+160000);const mf=myFires.find(f=>f.x==fi.x&&f.z==fi.z);if(mf)mf.end=fi.end}else send('fuel',{x:fi.x,z:fi.z});toast('薪をくべた');return}
+ const o=nearest(null,3.2);if(!o){toast('近くに採取できるものがない');return}
+ if(o.t==0){S.wood+=2;toast('木を切った 🪵+2')}else if(o.t==1){S.stone+=1;toast('石を拾った 🪨+1')}else{S.meat+=2;toast('ベリーを摘んだ 🍓+2')}
+ cutObj(o.id,now());myCuts.push([o.id,now()]);
+}
+function buildFire(){
+ if(S.down)return;if(S.wood<3||S.stone<1){toast('木3と石1が必要');return}
+ const f=fwd();S.wood-=3;S.stone--;myFires.push({x:S.x+f.x*2.2,z:S.z+f.z*2.2,end:now()+100000});toast('焚き火を作った 🔥')}
+function eat(){if(S.meat<1){toast('食料がない');return}S.meat--;S.food=Math.min(100,S.food+22);toast('食べた')}
+function gift(){const k=nearPeer(5);if(!k||S.meat<1){toast('近くの仲間 or 食料がない');return}S.meat--;send('gift',{to:k});toast('食料を渡した')}
+function attack(){
+ if(S.down||S.swing>now())return;S.swing=now()+500;const f=fwd();
+ for(const w of wolves){if(!w.on)continue;const dx=w.x-S.x,dz=w.z-S.z,d=Math.hypot(dx,dz);if(d<3.2&&(dx*f.x+dz*f.z)/d>.3){w.hp--;w.stun=.6;if(w.hp<=0){w.on=false;w.re=now()+25000;w.m.visible=false;S.meat+=3;toast('狼を倒した 🍖+3')}}}
+}
+function send(t,d){if(room&&room.readyState==1)room.send(JSON.stringify({k:'ev',t,d}))}
+
+// ---- wolves (each client simulates wolves that hunt itself) ----
+const wolves=[];
+for(let i=0;i<4;i++){const g=new THREE.Group(),b=new THREE.Mesh(new THREE.BoxGeometry(.6,.7,1.5),new THREE.MeshLambertMaterial({color:0x55555c})),h=new THREE.Mesh(new THREE.BoxGeometry(.5,.5,.6),b.material);
+ h.position.set(0,.3,-.95);b.position.y=.7;h.position.y=.95;const e=new THREE.Mesh(new THREE.BoxGeometry(.4,.08,.05),new THREE.MeshBasicMaterial({color:0xff2020}));e.position.set(0,1.02,-1.27);
+ g.add(b,h,e);g.visible=false;scene.add(g);wolves.push({m:g,on:false,hp:3,x:0,z:0,cd:0,re:0,stun:0})}
+
+// ---- peers / fires visuals ----
+const colors=[0xe74c3c,0x3498db,0xf1c40f,0x9b59b6,0x1abc9c,0xe67e22];
+const pm=new Map();
+function peerMesh(k,p){let m=pm.get(k);if(m)return m;m=new THREE.Group();const c=colors[(p.c|0)%colors.length],mat=new THREE.MeshLambertMaterial({color:c});
+ const b=new THREE.Mesh(new THREE.CylinderGeometry(.35,.35,1.2,8),mat),h=new THREE.Mesh(new THREE.SphereGeometry(.28,8,6),new THREE.MeshLambertMaterial({color:0xf0d0b0}));b.position.y=.7;h.position.y=1.6;m.add(b,h);m.userData={x:p.x,z:p.z,ry:p.ry};scene.add(m);pm.set(k,m);return m}
+const fireMeshes=[],lights=[];
+for(let i=0;i<8;i++){const g=new THREE.Group(),l=new THREE.Mesh(new THREE.CylinderGeometry(.15,.15,1,5).rotateZ(1.2),new THREE.MeshLambertMaterial({color:0x4a2f1a})),fl=new THREE.Mesh(new THREE.ConeGeometry(.45,1.3,6).translate(0,.9,0),new THREE.MeshBasicMaterial({color:0xff8a1c}));g.add(l,fl);g.userData.fl=fl;g.visible=false;scene.add(g);fireMeshes.push(g)}
+for(let i=0;i<4;i++){const l=new THREE.PointLight(0xff8a30,0,22);scene.add(l);lights.push(l)}
+const myColor=Math.floor(Math.random()*colors.length);
+
+// ---- network (WebSocket rooms) ----
+let ws=null;
+function connect(msg){
+ $('net').textContent='接続中…';
+ ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host);
+ ws.onopen=()=>ws.send(JSON.stringify(msg));
+ ws.onerror=()=>{$('net').textContent='サーバーに接続できません'};
+ ws.onclose=()=>{if(S.started&&!S.won){room=null;$('ov').style.display='flex';$('ov').querySelector('div').innerHTML='<h1>切断されました</h1><p>リロードして再入室してください。</p>'}};
+ ws.onmessage=e=>{const m=JSON.parse(e.data);
+  if(m.k=='err'){$('net').textContent=m.m;return}
+  if(m.k=='joined'){myPeer=m.id;tOff=m.now-Date.now();t0=m.t0;CODE=m.code;genWorld(m.seed);room=ws;S.started=true;$('ov').style.display='none';history.replaceState(null,'','?room='+m.code);toast('部屋コード: '+m.code);try{$('c').requestPointerLock()}catch(e){}}
+  else if(m.k=='peers'){const n=new Map();for(const id in m.p){if(id==myPeer)continue;const pr=m.p[id];n.set(id,pr);(pr.cut||[]).forEach(([i,ts])=>{if(objs[i]&&cuts[i]!==ts&&now()-ts<REGROW[objs[i].t]*1000)cutObj(i,ts)})}peers=n}
+  else if(m.k=='ev'){const d=m.d||{};
+   if(m.t=='fuel'){const f=myFires.find(f=>Math.abs(f.x-d.x)<.01&&Math.abs(f.z-d.z)<.01);if(f)f.end=Math.min(f.end+40000,now()+160000)}
+   else if(m.t=='revive'&&d.to===myPeer&&S.down){S.down=false;S.hp=45;toast('仲間が助けてくれた！')}
+   else if(m.t=='gift'&&d.to===myPeer){S.meat++;toast('仲間から食料をもらった')}}
+ }}
+$('mk').onclick=()=>connect({k:'join',create:true});
+$('jn').onclick=()=>connect({k:'join',code:$('cd').value.trim()});
+$('cd').value=(new URLSearchParams(location.search).get('room')||'').toUpperCase();
+setInterval(()=>{if(!room||room.readyState!=1)return;myCuts=myCuts.filter(([id,ts])=>now()-ts<REGROW[objs[id].t]*1000);myFires=myFires.filter(f=>f.end>now());
+ room.send(JSON.stringify({k:'p',p:{x:+S.x.toFixed(2),z:+S.z.toFixed(2),ry:+S.ry.toFixed(2),hp:Math.round(S.hp),down:S.down,fires:myFires,cut:myCuts,c:myColor}}))},100);
+
+// ---- main loop ----
+const clk=new THREE.Clock(),dayC=new THREE.Color(0x8ecae6),nightC=new THREE.Color(0x04060d),skyC=new THREE.Color();
+scene.fog=new THREE.Fog(0x8ecae6,15,95);
+let light=1;
+function loop(){
+ requestAnimationFrame(loop);const dt=Math.min(clk.getDelta(),.1),t=now();
+ const phase=(((t-t0)/1000)%DAY)/DAY;light=Math.max(0,Math.min(1,Math.sin(phase*Math.PI*2)*1.6+.4));
+ if(lastPhase!==null&&phase<lastPhase&&S.started){S.day++;if(S.day>5&&!S.won){S.won=true;$('ov').style.display='flex';$('ov').querySelector('div').innerHTML='<h1>🌅 生還成功！</h1><p>5日間の夜を生き延びた。森の朝を迎えた。<br>リロードでもう一度挑戦できます。</p>'}else toast('第'+S.day+'日の朝')}
+ lastPhase=phase;
+ skyC.copy(nightC).lerp(dayC,light);scene.background=skyC;scene.fog.color.copy(skyC);
+ amb.intensity=.12+.55*light;sun.intensity=.05+.85*light;
+ const night=light<.25;
+
+ if(S.started&&!S.won){
+  // movement
+  if(S.down){S.downT-=dt;if(S.downT<=0){S.down=false;S.hp=50;S.food=60;S.warm=60;S.wood=S.stone=S.meat=0;S.x=0;S.z=6;toast('キャンプで目を覚ました…持ち物を失った')}}
+  else{const f=fwd(),r=new THREE.Vector3(-f.z,0,f.x);let mx=0,mz=0;
+   if(keys.KeyW||keys.ArrowUp){mx+=f.x;mz+=f.z}if(keys.KeyS||keys.ArrowDown){mx-=f.x;mz-=f.z}
+   if(keys.KeyD||keys.ArrowRight){mx+=r.x;mz+=r.z}if(keys.KeyA||keys.ArrowLeft){mx-=r.x;mz-=r.z}
+   if(keys.ArrowLeft)S.ry+=dt*1.8;if(keys.ArrowRight)S.ry-=dt*1.8;
+   const l=Math.hypot(mx,mz)||1,sp=(keys.ShiftLeft||keys.ShiftRight)?8:5;S.x+=mx/l*sp*dt*(mx||mz?1:0);S.z+=mz/l*sp*dt*(mx||mz?1:0);
+   for(const o of objs){if(!o.vis||o.t==2)continue;const dx=S.x-o.x,dz=S.z-o.z,d=Math.hypot(dx,dz),rr=o.t==0?.8:1.1*o.s;if(d<rr&&d>0){S.x=o.x+dx/d*rr;S.z=o.z+dz/d*rr}}
+   S.x=Math.max(-W,Math.min(W,S.x));S.z=Math.max(-W,Math.min(W,S.z))}
+  // regrow
+  for(const id in cuts){const o=objs[id];if(t-cuts[id]>REGROW[o.t]*1000){delete cuts[id];o.vis=true;place(o)}}
+  // survival stats
+  const fires=allFires(),nearFire=fires.some(f=>Math.hypot(f.x-S.x,f.z-S.z)<7);
+  if(!S.down){S.food=Math.max(0,S.food-.4*dt);
+   S.warm=Math.max(0,Math.min(100,S.warm+(nearFire?6:night?-1.6:1.2)*dt));
+   if(S.food<=0||S.warm<=0)S.hp-=3*dt;else if(S.food>40&&S.warm>40)S.hp=Math.min(100,S.hp+1*dt);
+   if(S.hp<=0){S.hp=0;S.down=true;S.downT=22;toast('倒れた… 仲間の助けを待つ')}}
+  // wolves
+  for(const w of wolves){
+   if(!night){w.on=false;w.m.visible=false;continue}
+   if(!w.on&&t>w.re){const a=Math.random()*6.283;w.x=S.x+Math.cos(a)*38;w.z=S.z+Math.sin(a)*38;w.hp=3;w.on=true;w.m.visible=true}
+   if(!w.on)continue;
+   const sc=fires.find(f=>Math.hypot(f.x-w.x,f.z-w.z)<10);let dx=S.x-w.x,dz=S.z-w.z,d=Math.hypot(dx,dz)||1;
+   if(sc){dx=w.x-sc.x;dz=w.z-sc.z;d=Math.hypot(dx,dz)||1}
+   if(w.stun>0)w.stun-=dt;else if(sc||d>1.4||S.down){const v=(sc?4.5:4.3)*dt*(S.down&&!sc?.3:1);w.x+=dx/d*v;w.z+=dz/d*v}
+   w.cd-=dt;if(!sc&&!S.down&&Math.hypot(S.x-w.x,S.z-w.z)<1.7&&w.cd<=0){w.cd=1;S.hp-=10;$('dmg').style.opacity=1;setTimeout(()=>$('dmg').style.opacity=0,200)}
+   w.m.position.set(w.x,0,w.z);w.m.rotation.y=Math.atan2(-(S.x-w.x),-(S.z-w.z))+(sc?Math.PI:0);
+  }
+ }
+ // camera
+ cam.position.set(S.x,S.down?.5:1.7,S.z);cam.rotation.set(S.down?-.2:S.rx,S.ry,S.down?.6:0);
+ // peers
+ const seen=new Set();
+ peers.forEach((p,k)=>{seen.add(k);const m=peerMesh(k,p),u=m.userData;u.x+=(p.x-u.x)*.25;u.z+=(p.z-u.z)*.25;u.ry+=(p.ry-u.ry)*.25;m.position.set(u.x,0,u.z);m.rotation.y=u.ry;m.rotation.z=p.down?1.4:0;m.position.y=p.down?.4:0});
+ pm.forEach((m,k)=>{if(!seen.has(k)){scene.remove(m);pm.delete(k)}});
+ // fires
+ const fs=allFires(),cp=cam.position;fireMeshes.forEach(g=>g.visible=false);lights.forEach(l=>l.intensity=0);
+ fs.sort((a,b)=>Math.hypot(a.x-S.x,a.z-S.z)-Math.hypot(b.x-S.x,b.z-S.z));
+ fs.slice(0,8).forEach((f,i)=>{const g=fireMeshes[i];g.visible=true;g.position.set(f.x,0,f.z);const fl=.85+Math.random()*.4;g.userData.fl.scale.set(fl,fl+.2,fl);
+  if(i<4){lights[i].position.set(f.x,1.6,f.z);lights[i].intensity=(1.4+Math.random()*.5)*Math.min(1,(f.end-t)/8000)}});
+ renderer.render(scene,cam);hud(fs);
+}
+function hud(fs){
+ $('bh').style.width=S.hp+'%';$('bf').style.width=S.food+'%';$('bw').style.width=S.warm+'%';
+ $('inv').textContent=`🪵${S.wood}  🪨${S.stone}  🍓${S.meat}`;
+ const hh=Math.floor((((Date.now()/1000%DAY)/DAY)*24+6)%24);
+ $('info').innerHTML=`第 ${Math.min(S.day,5)} / 5 日 ${light<.25?'🌙 夜':'☀ 昼'}<br>焚き火 ${fs.length}<br>部屋 <b>${CODE}</b>`;
+ let tm=`<b>仲間 ${peers.size+1}人</b>${room?'':'(ソロ)'}<br>あなた ${Math.round(S.hp)}${S.down?' 💀 '+Math.ceil(S.downT)+'s':''}`;
+ peers.forEach((p,k)=>{const c='#'+colors[(p.c|0)%colors.length].toString(16).padStart(6,'0');tm+=`<br><span style="color:${c}">●</span> ${Math.round(p.hp??100)}${p.down?' 💀救助してE':''}  ${Math.round(Math.hypot(p.x-S.x,p.z-S.z))}m`});
+ $('team').innerHTML=tm;
+ let h='';const o=nearest(null,3.2);
+ if(S.down)h='倒れている… 仲間を待つか、しばらくするとキャンプで復活';
+ else if(nearPeer(3,p=>p.down))h='[E] 仲間を助け起こす';
+ else if(fs.some(f=>Math.hypot(f.x-S.x,f.z-S.z)<3)&&S.wood)h='[E] 薪をくべる';
+ else if(o)h=['[E] 木を切る','[E] 石を拾う','[E] ベリーを摘む'][o.t];
+ else if(light<.25)h='夜だ！焚き火のそばにいれば狼は寄ってこない [F]で焚き火';
+ $('hint').style.display=h?'block':'none';$('hint').textContent=h;
+}
+loop();
+</script>
+</body>
+</html>
